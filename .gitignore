@@ -5,24 +5,11 @@ __pycache__/
 *$py.class
 .python-version
 
-# --- Distribution / Build ---
-dist/
-build/
-*.egg-info/
-
 # --- Environment variables (Security) ---
 .env
-.env.local
-
-# --- IDEs ---
-.vscode/
-.idea/
-
-# --- Jupyter ---
-.ipynb_checkpoints/
 
 # --- Shortcuts
 *.lnk
 
 # --- datasets
-*.csv
+data/
