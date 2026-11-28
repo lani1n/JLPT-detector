@@ -2,19 +2,15 @@ import os
 import re
 import json
 from pathlib import Path
-from dotenv import load_dotenv
-import pandas as pd
 from google import genai
 from google.genai import types
+import streamlit as st
+import pandas as pd
+from jlpt_lookup import JLPT_LEVELS, allowed_levels, classify, load_data
 
-load_dotenv()
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-client = genai.Client()
-
-# Ordered from easiest to hardest
-JLPT_LEVELS = ["N5", "N4", "N3", "N2", "N1", "N0"]
-
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 def generate_json(prompt, schema, max_output_tokens=2048):
     response = client.models.generate_content(
@@ -62,21 +58,16 @@ def analyze_JLPT(
     if not isinstance(text, str) or not text.strip():
         raise ValueError("text must be a non-empty string.")
 
-    if level not in JLPT_LEVELS:
-        raise ValueError(f"level must be one of {JLPT_LEVELS}.")
-
     if not isinstance(max_words, int) or max_words < 1:
         raise ValueError("max_words must be a positive integer.")
 
-    if level == "N0" and no_N0_words:
-        raise ValueError("level='N0' requires no_N0_words=False.")
+    # Also validates level
+    levels = allowed_levels(level, include_n0=not no_N0_words)
+
+    # Fail before calling Gemini if a data file is missing
+    load_data()
 
     text = text.strip()
-
-    allowed_levels = JLPT_LEVELS[JLPT_LEVELS.index(level):]
-
-    if no_N0_words:
-        allowed_levels = [x for x in allowed_levels if x != "N0"]
 
     schema = {
         "type": "OBJECT",
@@ -110,31 +101,33 @@ def analyze_JLPT(
     }
 
     prompt = f"""
-คุณคือผู้เชี่ยวชาญภาษาญี่ปุ่นและศัพท์ระดับสูง และเป็นนักแปลขั้นสูงญี่ปุ่น-ไทย
+# บทบาท: คุณคือผู้เชี่ยวชาญภาษาญี่ปุ่นและศัพท์ระดับสูง และเป็นนักแปลขั้นสูงญี่ปุ่น-ไทย
 
 ข้อความต้นฉบับ:
 
 {text}
 
-งานที่ 1: การแปล (translation)
-แปลข้อความทั้งหมดเป็นภาษาไทยอย่างครบถ้วนและสละสลวย
+# หน้าที่
+## งานที่ 1: การแปล (translation)
+จงแปลข้อความทั้งหมดเป็นภาษาไทยอย่างครบถ้วนและสละสลวย
 โดยอิงภาษาศาสตร์สังคมปฏิบัติ (sociopragmatics)
-รักษาน้ำเสียง ระดับภาษา และการแบ่งย่อหน้าของต้นฉบับ
+รักษาน้ำเสียง (tone) ระดับภาษา (register) และการแบ่งย่อหน้าของต้นฉบับ
 ห้ามสรุปหรือตัดทอน
 
-งานที่ 2: การเก็บศัพท์ (vocabulary)
+## งานที่ 2: การเก็บคำศัพท์ (vocabulary)
 เลือกศัพท์ (lexemes) ที่มีคุณค่าในการเรียนรู้ ไม่เกิน {max_words} คำ
-เฉพาะระดับ {", ".join(allowed_levels)} เท่านั้น
+เฉพาะระดับ {", ".join(levels)} เท่านั้น
 หากมีไม่ถึงจำนวนดังกล่าว ไม่ต้องเติมให้ครบ
 
-ข้อกำหนด:
-
+# ข้อกำหนด
 1. ไม่เลือกรูปไวยากรณ์ (文法)
 2. ไม่เลือกคำช่วยทางไวยากรณ์ (助詞)
-3. surface = รูปที่ปรากฏจริงในข้อความ คัดลอกมาตรงตัวอักษร (เช่น 味わい)
-4. expression = รูปพจนานุกรม (辞書形) ของคำนั้น (เช่น 味わう)
-5. reading = คำอ่านของ expression เป็นฮิรางานะ (คำคาตากานะให้คงเป็นคาตากานะ)
-6. definition = ความหมายภาษาไทยตามบริบท
+3. surface = รูปที่ปรากฏจริงในข้อความ คัดลอกมาตรงตัวอักษร (เช่น 味わい、食べさせて)
+4. expression = รูปพจนานุกรม (辞書形) ของคำนั้น (เช่น 味わう、食べる)
+   ต้องคงรูปเขียนตามต้นฉบับ ห้ามเปลี่ยนเป็นคันจิตัวอื่นหรือรูปเขียนที่พบบ่อยกว่า
+   (เช่น 曰う ต้องคงเป็น 曰う ห้ามเปลี่ยนเป็น 言う และคำที่เขียนด้วยคานะให้คงเป็นคานะ)
+5. reading = คำอ่านของ expression เป็นอักษรฮิรางานะ (คำคาตากานะให้คงเป็นคาตากานะ)
+6. definition = ความหมายภาษาไทยโดยอิงตามบริบททางภาษา (linguistic context)
 7. jlpt = ระดับความยาก โดยอิงจากผู้เรียนภาษาญี่ปุ่นทั่วไป ประกอบกับเกณฑ์นี้
    - N5 = ศัพท์รูปธรรม กริยาพื้นฐาน จำนวน เวลา
    - N4 = ศัพท์สภาวะทางอารมณ์ เครื่องใช้ภายในบ้าน รูปสุภาพ (敬語)
@@ -142,7 +135,17 @@ def analyze_JLPT(
    - N2 = ศัพท์ธุรกิจ สำนวนทางการ ภาษาจดหมาย สัทพจน์
    - N1 = คันจิควบกล้ำ (四字熟語) ศัพท์วรรณกรรม
    - N0 = ระดับสูงกว่า N1: ศัพท์เฉพาะทาง เช่น คันจิโบราณ (旧字体)
-     การสอบคันจิ (เช่น 漢検2級) วรรณกรรมคลาสสิก (เช่น 故事成語)
+     การสอบคันจิระดับสูง (เช่น 漢検準1級 หรือสูงกว่า) วรรณกรรมคลาสสิก (เช่น 故事成語)
+     รวมถึงรูปเขียนที่ปรากฏน้อย แม้ความหมายจะไม่ยาก เช่น 同訓異字 (曰う、謂う)
+
+# ข้อจำกัดและข้อควรระวัง
+หากข้อความต้นฉบับมี
+1. ฟูริกานะ (振り仮名) จงเพิกเฉยและห้ามแปลฟูริกานะซ้ำ เช่น 何故なぜ "ทำไม"
+2. อักษรพ้องรูป (homographs) จงปฎิบัติตามหลักเกณฑ์นี้อย่างเคร่งครัด
+    3.1 หากความหมายต่างกัน จงพิจารณาความหมายที่เหมาะสมกับบริบท
+    และเลือกศัพท์นั้นสำหรับงานที่ 2 เช่น 人気 อ่านได้ทั้ง にんき หรือ ひとけ
+    3.2 หากความหมายเหมือนกัน จงพิจารณาระดับภาษาของข้อความและประเภทงานเขียน
+    เช่น 今日 ควรมีเสียงอ่านใด きょう、こんにち หรือ こんち จงพิจารณาจากข้อความ
 """
 
     result = generate_json(prompt, schema, max_output_tokens=8192)
@@ -175,12 +178,15 @@ def analyze_JLPT(
         expression = str(item.get("expression", "")).strip()
         reading = str(item.get("reading", "")).strip()
         definition = str(item.get("definition", "")).strip()
-        jlpt = item.get("jlpt")
 
         if not all([surface, expression, reading, definition]):
             continue
 
-        if jlpt not in allowed_levels:
+        # List first, then the N0 rule, then Gemini's estimate.
+        # This must happen before the level filter.
+        jlpt, level_source = classify(expression, reading, item.get("jlpt"))
+
+        if jlpt not in levels:
             continue
 
         # Japanese has no spaces, so use a plain substring check
@@ -194,7 +200,8 @@ def analyze_JLPT(
             "expression": expression,
             "reading": reading,
             "definition": definition,
-            "jlpt": jlpt
+            "jlpt": jlpt,
+            "level_source": level_source
         }
 
         if include_example:

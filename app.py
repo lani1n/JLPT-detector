@@ -1,6 +1,6 @@
+from nlp_logic import analyze_JLPT
 import streamlit as st
 
-from nlp_logic import analyze_JLPT
 
 OUTPUT_CSV = "data/vocabulary.csv"
 
@@ -15,7 +15,7 @@ with st.sidebar:
         ["N5", "N4", "N3", "N2", "N1"],
         index=2  # N3
     )
-    max_words = st.slider("Maximum words", 5, 50, 20)
+    max_words = st.slider("Maximum words", 5, 30, 20)
     include_n0 = st.checkbox("Include above N1 (N0)", value=False)
 
 # Top: input on the left, translation on the right
